@@ -1,0 +1,210 @@
+units                 metal
+variable              x equal 300         # Temperature
+# setup initial structure 
+dimension             3
+boundary              p p p  
+atom_style            atomic
+variable              lattice index 3.60
+variable              Al_a equal ${lattice}   
+variable              Co_a equal ${lattice}  
+variable              Fe_a equal ${lattice}  
+variable              Cr_a equal ${lattice}  
+variable              dt equal 0.0005
+
+lattice               fcc ${lattice}
+
+region                1 block 0 15 0 15 0 15
+create_box            5 1  # Define 5 atom types: Al, Fe, Cr, Co, Ni
+
+create_atoms          1 region 1
+timestep              ${dt}
+
+# Set atomic fractions (Al=0.5, Fe, Cr, Co; Ni fraction = 0)
+set                   type 1 type/fraction 2 0 123459   
+set                   type 1 type/fraction 3 0.2857 123469 
+set                   type 1 type/fraction 4 0.39997 123479 
+set                   type 1 type/fraction 5 0.33339 123489 
+
+group                 Fe type 1
+group                 Ni type 2
+group                 Cr type 3
+group                 Co type 4
+group                 Al type 5  
+
+#----------------------------Apply eam potential-----------
+
+pair_style            eam/alloy
+pair_coeff            * * FeNiCrCoAl-heaweight.setfl Fe Ni Cr Co Al
+
+write_data            HEA_1.DATA
+min_style             cg
+minimize              1e-25 1e-25 10000 100000
+write_data            HEA_min.DATA
+
+neighbor              0.3 bin
+neigh_modify          every 2 delay 0 check yes
+
+########################################################################
+
+# Step 1: OPT
+
+reset_timestep        0
+velocity              all set 0.00 0.00 0.00 units box
+min_style             sd
+min_modify            dmax 0.2
+compute               peratom all pe/atom
+compute               st all stress/atom NULL
+compute               Stresses all reduce ave c_st[1] c_st[2] c_st[3]
+
+variable              xSt atom "c_st[1]/(vol*10000)"  # x stress in GPa
+variable              ySt atom "c_st[2]/(vol*10000)"  # y stress in GPa
+variable              zSt atom "c_st[3]/(vol*10000)"  # z stress in GPa
+
+dump                  min_opt all custom 10000 eq20_opt.* id type x y z c_peratom v_xSt v_ySt v_zSt
+minimize              1.0e-25  1.0e-25   10000    100000
+undump                min_opt
+write_data            eq20_min.data
+
+########################################################################
+
+thermo                5000
+thermo_style          custom step atoms temp etotal pe ke press vol density lx ly lz
+thermo_modify         flush yes lost warn norm yes 
+
+########################################################################
+
+# Step 2: NPT & MC Steps
+
+reset_timestep        0
+velocity              all create 300.0 1345678 dist gaussian
+run                   0   
+
+fix                   1 all npt temp 300.0 300.0 0.01 iso 1.01325 1.01325 1.0 drag 1.8
+dump                  npt1 all custom 10000 eq20_npt1.* id type x y z c_peratom v_xSt v_ySt v_zSt
+run                   50000
+undump                npt1
+unfix                 1
+
+write_data            eq20_npt_1.data
+
+# Monte Carlo Swap Steps
+reset_timestep        0
+dump                  MC1 all custom 15000 eq20_MC1.* id type x y z c_peratom v_xSt v_ySt v_zSt
+
+fix                   MC1 all atom/swap 1 1 11345678 300 ke no types 1 5
+run                   150000
+unfix                 MC1
+
+fix                   MC2 all atom/swap 1 1 11345678 300 ke no types 1 3
+run                   150000
+unfix                 MC2
+
+fix                   MC3 all atom/swap 1 1 11345678 300 ke no types 1 4
+run                   150000
+unfix                 MC3
+
+fix                   MC4 all atom/swap 1 1 11345678 300 ke no types 5 3
+run                   150000
+unfix                 MC4
+
+fix                   MC5 all atom/swap 1 1 11345678 300 ke no types 5 4
+run                   150000
+unfix                 MC5
+
+fix                   MC6 all atom/swap 1 1 11345678 300 ke no types 3 4
+run                   150000
+unfix                 MC6
+
+undump                MC1
+write_data            eq20_MC1.data
+
+########################################################################
+
+thermo                5000
+thermo_style          custom step atoms temp etotal pe ke press vol density lx ly lz
+thermo_modify         flush yes lost warn norm yes 
+
+########################################################################
+
+# Step 3: NPT (300K - 1500K - 300K, for bulk relaxation)
+
+########################################################################
+
+reset_timestep        0                           
+
+fix                   3 all npt temp 300.0 300.0 0.01 iso 1.01325 1.01325 1.0 drag 1.8
+fix                   4 all temp/rescale 5 300.0 300.0 0.1 1
+
+dump                  heat_cool all custom 100000 eq20_npt2.* id type x y z c_peratom v_xSt v_ySt v_zSt
+
+run                   200000
+write_data            eq20_npt_2_1.data
+
+unfix                 3
+unfix                 4
+
+###                (heat to 1500K)
+
+fix                   5 all npt temp 300.0 1500.0 0.01 iso 1.01325 1.01325 1.0 drag 1.8
+fix                   6 all temp/rescale 5 300.0 1500.0 0.1 1
+
+run                   300000
+write_data            eq20_npt_2_2.data
+
+unfix                 5
+unfix                 6
+
+###                (equilibrium 1500K)
+
+fix                   7 all npt temp 1500.0 1500.0 0.01 iso 1.01325 1.01325 1.0 drag 1.8
+fix                   8 all temp/rescale 5 1500.0 1500.0 0.1 1
+
+run                   200000
+write_data            eq20_npt_2_3.data
+
+unfix                 7
+unfix                 8
+
+###                (cool to 300K)
+
+fix                   9 all npt temp 1500.0 300.0 0.01 iso 1.01325 1.01325 1.0 drag 1.8
+fix                   10 all temp/rescale 5 1500.0 300.0 0.1 1
+
+run                   300000
+write_data            eq20_npt_2_4.data
+
+unfix                 9
+unfix                 10
+
+###                (equilibrium 300K)
+
+fix                   11 all npt temp 300.0 300.0 0.01 iso 1.01325 1.01325 1.0 drag 1.8
+fix                   12 all temp/rescale 5 300.0 300.0 0.1 1
+
+run                   200000
+write_data            eq20_npt_2_5.data
+
+unfix                 11
+unfix                 12
+
+undump                heat_cool
+write_data            eq20_npt_2.data
+
+########################################################################
+
+# Step 4: NVT Relaxation
+
+reset_timestep        0
+fix                   4 all nvt temp 300.0 300.0 0.01
+dump                  nvt1 all custom 100000 eq20_nvt.* id type x y z c_peratom v_xSt v_ySt v_zSt
+run                   500000
+undump                nvt1
+unfix                 4
+
+write_data            eq20_nvt_1.data
+
+########################################################################
+
+# Simulation Complete
+print                 "All done"
+write_restart         HEA_restart.data
