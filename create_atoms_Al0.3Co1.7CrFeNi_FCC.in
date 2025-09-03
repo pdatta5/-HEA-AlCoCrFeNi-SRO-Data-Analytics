@@ -1,0 +1,161 @@
+units                 metal
+variable              x equal 300         # Temperature
+# setup initial structure 
+dimension             3
+boundary              p p p  
+atom_style            atomic
+variable              lattice index 3.66 
+variable              Al_a equal ${lattice}   
+variable              Co_a equal ${lattice}  
+variable              Fe_a equal ${lattice}  
+variable              Cr_a equal ${lattice}  
+variable              dt equal 0.0005
+
+lattice               fcc ${lattice}
+
+region                1 block 0 15 0 15 0 15
+create_box            5 1  # Define 5 atom types: Al, Fe, Cr, Co, Ni
+
+create_atoms          1 region 1
+timestep              ${dt}
+
+# Set atomic fractions 
+set                   type 1 type/fraction 2 0.20 123459   
+set                   type 1 type/fraction 3 0.25 123469 
+set                   type 1 type/fraction 4 0.56667 123479 
+set                   type 1 type/fraction 5 0.230769 123489  
+
+group                 Fe type 1
+group                 Ni type 2
+group                 Cr type 3
+group                 Co type 4
+group                 Al type 5  
+
+#----------------------------Apply eam potential-----------
+
+pair_style            eam/alloy
+pair_coeff            * * FeNiCrCoAl-heaweight.setfl Fe Ni Cr Co Al
+
+write_data            HEA_1.DATA
+min_style             cg
+minimize              1e-25 1e-25 10000 100000
+write_data            HEA_min.DATA
+
+neighbor              0.3 bin
+neigh_modify          every 2 delay 0 check yes
+
+########################################################################
+
+# Step 1: OPT
+
+reset_timestep        0
+velocity              all set 0.00 0.00 0.00 units box
+min_style             sd
+min_modify            dmax 0.2
+compute               peratom all pe/atom
+compute               st all stress/atom NULL
+compute               Stresses all reduce ave c_st[1] c_st[2] c_st[3]
+
+variable              xSt atom "c_st[1]/(vol*10000)"  # x stress in GPa
+variable              ySt atom "c_st[2]/(vol*10000)"  # y stress in GPa
+variable              zSt atom "c_st[3]/(vol*10000)"  # z stress in GPa
+
+dump                  min_opt all custom 10000 eq20_opt.* id type x y z c_peratom v_xSt v_ySt v_zSt
+minimize              1.0e-25  1.0e-25   10000    100000
+undump                min_opt
+write_data            eq20_min.data
+
+########################################################################
+
+thermo                5000
+thermo_style          custom step atoms temp etotal pe ke press vol density lx ly lz
+thermo_modify         flush yes lost warn norm yes 
+
+########################################################################
+# step 2: NPT & MC
+
+########################################################################
+
+reset_timestep	0
+velocity        all create 300.0 1345678 dist gaussian
+run             0   
+
+fix             1 all npt temp 300.0 300.0 0.01 iso 1.01325 1.01325 1.0 drag 1.8
+fix             2 all temp/rescale 5 300.0 300.0 0.1 1
+
+dump			npt1	all	custom	10000	eq20_npt1.50000 	id	type	x	y	z	c_peratom	v_xSt	v_ySt	v_zSt
+
+run             50000
+
+undump			npt1
+
+unfix           1
+unfix           2
+
+write_data      HEA_npt_1.data
+
+########################################################################
+
+thermo          5000
+thermo_style    custom step atoms temp etotal pe ke press vol density lx ly lz
+thermo_modify   flush yes lost warn norm yes 
+
+########################################################################
+
+# MC1	(eq20)
+
+reset_timestep	0
+dump			MC1	all	custom	150000	eq20_MC1.*	id	type	x	y	z	c_peratom	v_xSt	v_ySt	v_zSt
+
+fix             MC1 all atom/swap 1 1 11345678 300 ke no types 1 2
+run             150000
+unfix           MC1
+
+fix             MC2 all atom/swap 1 1 11345678 300 ke no types 1 3
+run             150000
+unfix           MC2
+
+fix             MC3 all atom/swap 1 1 11345678 300 ke no types 1 4
+run             150000
+unfix           MC3
+
+fix             MC4 all atom/swap 1 1 11345678 300 ke no types 1 5
+run             150000
+unfix           MC4
+
+fix             MC5 all atom/swap 1 1 11345678 300 ke no types 2 3
+run             150000
+unfix           MC5
+
+fix             MC6 all atom/swap 1 1 11345678 300 ke no types 2 4 
+run             150000
+unfix           MC6
+
+fix             MC7 all atom/swap 1 1 11345678 300 ke no types 2 5
+run             150000
+unfix           MC7
+
+fix             MC8 all atom/swap 1 1 11345678 300 ke no types 3 4
+run             150000
+unfix           MC8
+
+fix             MC9 all atom/swap 1 1 11345678 300 ke no types 3 5 
+run             150000
+unfix           MC9
+
+fix             MC10 all atom/swap 1 1 11345678 300 ke no types 4 5
+run             150000
+unfix           MC10
+
+undump			MC1
+write_data      HEA_MC1.data
+
+########################################################################
+
+thermo          5000
+thermo_style    custom step atoms temp etotal pe ke press vol density lx ly lz
+thermo_modify   flush yes lost warn norm yes 
+
+########################################################################
+
+write_restart	HEA_restart.data
