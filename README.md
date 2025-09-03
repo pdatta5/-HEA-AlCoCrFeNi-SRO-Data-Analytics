@@ -23,7 +23,7 @@ Article Type: Full Length Article
 `read_lmp.m` – #Reads LAMMPS output for SRO analysis  
 
 ## Uniaxial Tensile Test (LAMMPS Input)**  
-`input_tensile_with_SRO.in` – #LAMMPS input for tensile test including SRO  
+`input_tensile_with_SRO.in` – #LAMMPS input file for tensile test calculation (with SRO) 
 
 ## Stress-Strain Extraction (MATLAB)**  
 `Stress_Strain.m` – #Extracts stress-strain data and generates plots  
